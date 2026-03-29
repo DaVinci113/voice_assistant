@@ -21,14 +21,13 @@ def callback(indata, frames, time, status):
 try:
     with sd.InputStream(samplerate=SAMPLE_RATE, dtype="float32", channels=1, callback=callback):
         start = time.time()
+        print("start")
         while time.time() - start < duration:
             try:
                 chunk = q.get(timeout=0.1)
                 chunks.append(chunk)
             except queue.Empty:
                 continue
-
-        print(audio_buffer)
 except KeyboardInterrupt:
     print("Shutting down")
 except Exception as e:
