@@ -15,7 +15,16 @@ from ai import get_response
 
 from conf import SAMPLE_RATE, CHUNK_SIZE, MODEL_PATH, WAKE_WORDS, COMMAND_URL
 
+
 logger = logging.getLogger(__name__)
+# file_logging = logging.FileHandler('voice_assistant.log')
+# file_logging.setLevel(logging.WARNING)
+# console_logging = logging.StreamHandler()
+# console_logging.setLevel(logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s"
+)
 
 model = Model(MODEL_PATH)
 
@@ -33,40 +42,54 @@ class AssistantState:
 def create_recognizer() -> KaldiRecognizer:
     """Создаём новый recognizer (сброс буфера)"""
     sample_rate = SAMPLE_RATE
+    logging.info("")
     return KaldiRecognizer(model, sample_rate)
 
 def check_wake_words(wake_word: tuple, recognize_text: str = None):
+    """Распознавание wake-word"""
     if not recognize_text:
         return False
+    logging.info("Распознано wake_word")
     return any(word in recognize_text for word in wake_word)
 
 def shortener_url(url: str)->str:
-    return url.split('.')[1]
+    """Выявление ссылки для открытия"""
+    url_address = url.split('.')[1]
+    logging.info(f"Ссылка для открытия {url_address}")
+    return url_address
 
 def check_command_url(recognize_text: str, command_url: dict=COMMAND_URL)->str|None:
+    """Распознавание команды для открытия"""
     if recognize_text:
         for command in command_url:
             for _ in command:
                 if recognize_text in _ :
-                    return command_url[command]
+                    result = command_url[command]
+                    logging.info(f"Команда для открытия{result}")
+                    return result
 
 def opening_url(url: str):
+    """Открытие ссылки в браузере"""
+    logging.info(f"Открываю в браузере {url}")
     webbrowser.open(url)
 
 
 def process_audio_chunk(chunk: bytes, recognizer: KaldiRecognizer, state: AssistantState, input_stream: sd.RawInputStream)-> KaldiRecognizer|None:
+    """Обработка чанков с микрофона"""
 
     if recognizer.AcceptWaveform(chunk):
         result = json.loads(recognizer.Result())
         text = result.get("text", "").strip()
-        print("full text: ", text)
+        logging.info(f"Распонанный текст: {text}")
         if not text:
             return recognizer
 
         if state.listening_state:
-            if url_name := check_command_url(recognize_text=text):
+            if url := check_command_url(recognize_text=text):
                 try:
-                    opening_url(url=url_name)
+                    url_name = shortener_url(url=url)
+                    voice.speak(voice.words["opening_url"]+url_name)
+                    opening_url(url=url)
                     return recognizer
                 except Exception as e:
                     recognizer.Reset()
@@ -74,6 +97,7 @@ def process_audio_chunk(chunk: bytes, recognizer: KaldiRecognizer, state: Assist
             try:
                 input_stream.stop()
                 ai_response = get_response(text)
+                logger.debug(f"Ответ ИИ: {ai_response}")
                 voice.speak(ai_response)
             except Exception as e:
                 print(e)
@@ -86,37 +110,31 @@ def process_audio_chunk(chunk: bytes, recognizer: KaldiRecognizer, state: Assist
                 voice.speak(voice.words["ready_to_listen"])
                 state.start_time_command = time.time()
                 recognizer.Reset()
-    # else:
-    #     partial = json.loads(recognizer.PartialResult())
-    #     partial_text = partial.get("partial", "").strip()
-    #     print("partial_text", partial_text)
-    #     if not state.listening_state and partial_text:
-    #         # threading.Thread(target=voice.speak(partial_text)).start()
-    #         if check_wake_words(wake_word=WAKE_WORDS, recognize_text=partial_text):
-    #             # threading.Thread(target=voice_ready_to_listen, daemon=True).start()
-    #             # voice.speak(voice.words["ready_to_listen"])
-    #             state.listening_state = True
-    #             threading.Thread(target=voice.speak(partial_text)).start()
-    #             # voice_ready_to_listen()
-    #             # state.last_reset = current_time
-    #             state.start_time_command = time.time()
-    #
-    #             # return create_recognizer()
-    #             recognizer.Reset()
+    else:
+        partial = json.loads(recognizer.PartialResult())
+        partial_text = partial.get("partial", "").strip()
+        logger.debug(f"Частично распознанный текст: {partial_text}")
+        if not state.listening_state and partial_text:
+            if check_wake_words(wake_word=WAKE_WORDS, recognize_text=partial_text):
+                voice.speak(voice.words["ready_to_listen"])
+                state.listening_state = True
+                state.start_time_command = time.time()
+
+                recognizer.Reset()
+
     return recognizer
 
 
 
 def main():
-    logging.basicConfig(filename='myapp.log', level=logging.INFO)
-    logger.info('Started')
+    logging.info("Приложение запущено")
     q = queue.Queue()
     state = AssistantState()
 
     try:
-        print("Model loaded.")
+        logging.debug("Модель загружена")
     except Exception as e:
-        print("Model not found.")
+        logging.error("Ошибка загрузка модели")
         raise e
 
     def callback_bytes(indata, frames, time, status):
@@ -127,8 +145,6 @@ def main():
 
     recognizer = create_recognizer()
 
-    print("🎤 Ассистент запущен. Слушаю...")
-    # voice_greeting()
     voice.speak(voice.words['greeting'])
     try:
         with (sd.RawInputStream(
@@ -143,9 +159,7 @@ def main():
                     chunk = q.get_nowait()
                     recognizer = process_audio_chunk(chunk, recognizer, state, stream)
                     time.sleep(0.01)
-                    print(state.listening_state)
-                    # if state.listening_state:
-                        # print(time.time() - state.start_time_command)
+                    logging.debug("Статус прослушивания команды")
 
                     if state.listening_state and time.time() - state.start_time_command > state.time_out_command:
                         state.listening_state = False

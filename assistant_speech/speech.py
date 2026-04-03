@@ -1,4 +1,7 @@
 import pyttsx3
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class Voice:
@@ -14,6 +17,7 @@ class Voice:
 
     def speak(self, text):
         self.engine.say(text)
+        logger.info(text)
         self.engine.runAndWait()
 
 if __name__ == '__main__':
